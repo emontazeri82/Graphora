@@ -1,7 +1,12 @@
-import math
+from __future__ import annotations
 
 import dearpygui.dearpygui as dpg
 
+from editor.graph_clipboard import GraphClipboard
+from editor.graph_history import GraphHistory, HistoryResult
+from editor.graph_hit_tester import GraphHitTester
+from editor.graph_renderer import GraphRenderer
+from editor.graph_view import GraphView
 from model.edge import Edge
 from model.edge_type import EdgeType
 from model.graph import Graph
@@ -56,20 +61,66 @@ class GraphEditor:
         self.selected_edge: Edge | None = None
 
         self.pending_edge_source: Node | None = None
-
         self.dragging_node: Node | None = None
 
         self.drag_offset_x: float = 0.0
         self.drag_offset_y: float = 0.0
+        self.drag_history_recorded: bool = False
 
-        # Canvas view
-        self.zoom: float = 1.0
-        self.pan_x: float = 0.0
-        self.pan_y: float = 0.0
+        self.hit_tester: GraphHitTester = GraphHitTester(self)
+        self.view: GraphView = GraphView(self)
+        self.renderer: GraphRenderer = GraphRenderer(self)
 
-        self.min_zoom: float = 0.25
-        self.max_zoom: float = 3.0
-        self.zoom_step: float = 0.1
+        self.history: GraphHistory = GraphHistory()
+        self.clipboard: GraphClipboard = GraphClipboard()
+
+    @property
+    def zoom(self) -> float:
+        return self.view.zoom
+
+    @zoom.setter
+    def zoom(self, value: float) -> None:
+        self.view.zoom = float(value)
+
+    @property
+    def pan_x(self) -> float:
+        return self.view.pan_x
+
+    @pan_x.setter
+    def pan_x(self, value: float) -> None:
+        self.view.pan_x = float(value)
+
+    @property
+    def pan_y(self) -> float:
+        return self.view.pan_y
+
+    @pan_y.setter
+    def pan_y(self, value: float) -> None:
+        self.view.pan_y = float(value)
+
+    @property
+    def min_zoom(self) -> float:
+        return self.view.min_zoom
+
+    @min_zoom.setter
+    def min_zoom(self, value: float) -> None:
+        self.view.min_zoom = float(value)
+
+    @property
+    def max_zoom(self) -> float:
+        return self.view.max_zoom
+
+    @max_zoom.setter
+    def max_zoom(self, value: float) -> None:
+        self.view.max_zoom = float(value)
+
+    @property
+    def zoom_step(self) -> float:
+        return self.view.zoom_step
+
+    @zoom_step.setter
+    def zoom_step(self, value: float) -> None:
+        self.view.zoom_step = float(value)
 
     # ==========================================================
     # MODE
@@ -85,6 +136,7 @@ class GraphEditor:
 
         self.pending_edge_source = None
         self.dragging_node = None
+        self.drag_history_recorded = False
 
         dpg.set_value(
             "current_mode",
@@ -125,43 +177,7 @@ class GraphEditor:
         )
 
     # ==========================================================
-    # COORDINATES
-    # ==========================================================
-
-    def get_canvas_mouse_position(
-    self,
-    ) -> tuple[float, float]:
-        mouse_x, mouse_y = dpg.get_mouse_pos(
-            local=False
-        )
-
-        canvas_x, canvas_y = dpg.get_item_rect_min(
-            "graph_canvas"
-        )
-
-        screen_x = float(
-            mouse_x - canvas_x
-        )
-
-        screen_y = float(
-            mouse_y - canvas_y
-        )
-
-        graph_x = (
-            screen_x - self.pan_x
-        ) / self.zoom
-
-        graph_y = (
-            screen_y - self.pan_y
-        ) / self.zoom
-
-        return (
-            graph_x,
-            graph_y,
-        )
-
-    # ==========================================================
-    # CANVAS CLICK
+    # CANVAS INTERACTION
     # ==========================================================
 
     def handle_canvas_click(
@@ -205,10 +221,6 @@ class GraphEditor:
                 y,
             )
 
-    # ==========================================================
-    # SELECT CLICK
-    # ==========================================================
-
     def handle_select_click(
         self,
         x: float,
@@ -223,6 +235,7 @@ class GraphEditor:
             self.select_node(node)
 
             self.dragging_node = node
+            self.drag_history_recorded = False
 
             self.drag_offset_x = (
                 x - node.x
@@ -254,6 +267,8 @@ class GraphEditor:
         x: float,
         y: float,
     ) -> None:
+        self.record_history("Create node")
+
         node = Node(
             node_id=self.next_node_id,
             name=f"Node {self.next_node_id}",
@@ -281,282 +296,7 @@ class GraphEditor:
         )
 
     # ==========================================================
-    # NODE DRAWING
-    # ==========================================================
-
-    def draw_node(
-        self,
-        node: Node,
-    ) -> None:
-        self.delete_node_drawing(node)
-
-        if self.selected_node is node:
-            outline_color = self.SELECTED_COLOR
-            thickness = 4
-        else:
-            outline_color = self.DEFAULT_NODE_OUTLINE
-            thickness = 2
-
-        tag = self.node_tag(node)
-
-        if node.shape == "Circle":
-            dpg.draw_circle(
-                center=(
-                    node.x,
-                    node.y,
-                ),
-                radius=node.radius,
-                color=outline_color,
-                fill=node.color,
-                thickness=thickness,
-                parent="canvas_layer",
-                tag=tag,
-            )
-
-        elif node.shape == "Square":
-            half_size = node.size / 2.0
-
-            dpg.draw_rectangle(
-                pmin=(
-                    node.x - half_size,
-                    node.y - half_size,
-                ),
-                pmax=(
-                    node.x + half_size,
-                    node.y + half_size,
-                ),
-                color=outline_color,
-                fill=node.color,
-                thickness=thickness,
-                parent="canvas_layer",
-                tag=tag,
-            )
-
-        elif node.shape == "Rectangle":
-            half_width = node.size / 2.0
-            half_height = node.size / 3.0
-
-            dpg.draw_rectangle(
-                pmin=(
-                    node.x - half_width,
-                    node.y - half_height,
-                ),
-                pmax=(
-                    node.x + half_width,
-                    node.y + half_height,
-                ),
-                color=outline_color,
-                fill=node.color,
-                thickness=thickness,
-                parent="canvas_layer",
-                tag=tag,
-            )
-
-        self.draw_node_label(node)
-
-    def draw_node_label(
-        self,
-        node: Node,
-    ) -> None:
-        tag = self.node_label_tag(node)
-
-        if dpg.does_item_exist(tag):
-            dpg.delete_item(tag)
-
-        display_text, base_font_size = (
-            self.get_fitted_node_label(node)
-        )
-
-        font_size = max(
-            6.0,
-            base_font_size * self.zoom,
-        )
-
-        text_width, text_height = self.get_text_size(
-            display_text
-        )
-
-        size_ratio = (
-            base_font_size / 14.0
-        )
-
-        text_width *= size_ratio
-        text_height *= size_ratio
-
-        dpg.draw_text(
-            pos=(
-                node.x - text_width / 2.0,
-                node.y - text_height / 2.0,
-            ),
-            text=display_text,
-            color=self.LABEL_COLOR,
-            size=font_size,
-            parent="canvas_layer",
-            tag=tag,
-        )
-    def get_fitted_node_label(
-        self,
-        node: Node,
-    ) -> tuple[str, float]:
-        text = node.name
-
-        normal_font_size = 14.0
-        min_font_size = 9.0
-
-        max_width = self.get_node_label_max_width(node)
-
-        text_width, _ = self.get_text_size(text)
-
-        if text_width <= max_width:
-            return text, normal_font_size
-
-        font_size = (
-            normal_font_size
-            * max_width
-            / max(text_width, 1.0)
-        )
-
-        if font_size >= min_font_size:
-            return text, font_size
-
-        font_size = min_font_size
-
-        available_width = (
-            max_width
-            * normal_font_size
-            / font_size
-        )
-
-        ellipsis = "..."
-        fitted_text = text
-
-        while fitted_text:
-            candidate = fitted_text + ellipsis
-
-            candidate_width, _ = self.get_text_size(
-                candidate
-            )
-
-            if candidate_width <= available_width:
-                return candidate, font_size
-
-            fitted_text = fitted_text[:-1]
-
-        return ellipsis, font_size
-
-
-    @staticmethod
-    def get_node_label_max_width(
-        node: Node,
-    ) -> float:
-        padding = 10.0
-
-        if node.shape == "Circle":
-            # Keep text comfortably inside the center of the circle.
-            return max(
-                10.0,
-                node.size * 0.72,
-            )
-
-        if node.shape == "Square":
-            return max(
-                10.0,
-                node.size - padding * 2.0,
-            )
-
-        if node.shape == "Rectangle":
-            return max(
-                10.0,
-                node.size - padding * 2.0,
-            )
-
-        return max(
-            10.0,
-            node.size - padding * 2.0,
-        )
-    
-    def delete_node_drawing(
-        self,
-        node: Node,
-    ) -> None:
-        tags = (
-            self.node_tag(node),
-            self.node_label_tag(node),
-        )
-
-        for tag in tags:
-            if dpg.does_item_exist(tag):
-                dpg.delete_item(tag)
-
-    @staticmethod
-    def node_tag(
-        node: Node,
-    ) -> str:
-        return f"node_{node.node_id}"
-
-    @staticmethod
-    def node_label_tag(
-        node: Node,
-    ) -> str:
-        return f"node_label_{node.node_id}"
-
-    # ==========================================================
-    # NODE HIT TESTING
-    # ==========================================================
-
-    def find_node_at(
-        self,
-        x: float,
-        y: float,
-    ) -> Node | None:
-        for node in reversed(
-            self.graph.nodes
-        ):
-            if self.point_inside_node(
-                node,
-                x,
-                y,
-            ):
-                return node
-
-        return None
-
-    @staticmethod
-    def point_inside_node(
-        node: Node,
-        x: float,
-        y: float,
-    ) -> bool:
-        dx = x - node.x
-        dy = y - node.y
-
-        if node.shape == "Circle":
-            return (
-                dx * dx + dy * dy
-                <= node.radius * node.radius
-            )
-
-        if node.shape == "Square":
-            half_size = node.size / 2.0
-
-            return (
-                abs(dx) <= half_size
-                and abs(dy) <= half_size
-            )
-
-        if node.shape == "Rectangle":
-            half_width = node.size / 2.0
-            half_height = node.size / 3.0
-
-            return (
-                abs(dx) <= half_width
-                and abs(dy) <= half_height
-            )
-
-        return False
-
-    # ==========================================================
-    # NODE SELECTION
+    # NODE SELECTION / DRAGGING
     # ==========================================================
 
     def select_node(
@@ -589,10 +329,6 @@ class GraphEditor:
             f"Selected {node.name}",
         )
 
-    # ==========================================================
-    # DRAGGING
-    # ==========================================================
-
     def handle_mouse_drag(
         self,
         sender: int | str,
@@ -607,6 +343,10 @@ class GraphEditor:
             return
 
         x, y = self.get_canvas_mouse_position()
+
+        if not self.drag_history_recorded:
+            self.record_history("Move node")
+            self.drag_history_recorded = True
 
         node.x = (
             x - self.drag_offset_x
@@ -705,6 +445,8 @@ class GraphEditor:
         target: Node,
         edge_type: EdgeType,
     ) -> None:
+        self.record_history("Create edge")
+
         edge = Edge(
             edge_id=self.next_edge_id,
             source=source,
@@ -745,432 +487,6 @@ class GraphEditor:
         )
 
     # ==========================================================
-    # EDGE DRAWING
-    # ==========================================================
-
-    def draw_edge(
-        self,
-        edge: Edge,
-    ) -> None:
-        self.delete_edge_drawing(edge)
-
-        if self.selected_edge is edge:
-            color = self.SELECTED_COLOR
-            thickness = edge.thickness + 2.0
-        else:
-            color = edge.color
-            thickness = edge.thickness
-
-        if edge.is_self_loop:
-            self.draw_self_loop(
-                edge,
-                color,
-                thickness,
-            )
-        else:
-            self.draw_regular_edge(
-                edge,
-                color,
-                thickness,
-            )
-
-    def draw_regular_edge(
-        self,
-        edge: Edge,
-        color: tuple[int, int, int, int],
-        thickness: float,
-    ) -> None:
-        start, end = self.get_edge_endpoints(
-            edge
-        )
-
-        dpg.draw_line(
-            p1=start,
-            p2=end,
-            color=color,
-            thickness=thickness,
-            parent="canvas_layer",
-            tag=self.edge_line_tag(edge),
-        )
-
-        if edge.is_directed:
-            self.draw_arrowhead(
-                edge,
-                start,
-                end,
-                color,
-            )
-
-    def draw_arrowhead(
-        self,
-        edge: Edge,
-        start: tuple[float, float],
-        end: tuple[float, float],
-        color: tuple[int, int, int, int],
-    ) -> None:
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-
-        angle = math.atan2(
-            dy,
-            dx,
-        )
-
-        arrow_length = 14.0
-        arrow_angle = math.radians(28.0)
-
-        left = (
-            end[0]
-            - arrow_length
-            * math.cos(
-                angle - arrow_angle
-            ),
-            end[1]
-            - arrow_length
-            * math.sin(
-                angle - arrow_angle
-            ),
-        )
-
-        right = (
-            end[0]
-            - arrow_length
-            * math.cos(
-                angle + arrow_angle
-            ),
-            end[1]
-            - arrow_length
-            * math.sin(
-                angle + arrow_angle
-            ),
-        )
-
-        dpg.draw_triangle(
-            p1=end,
-            p2=left,
-            p3=right,
-            color=color,
-            fill=color,
-            parent="canvas_layer",
-            tag=self.edge_arrow_tag(edge),
-        )
-
-    def draw_self_loop(
-        self,
-        edge: Edge,
-        color: tuple[int, int, int, int],
-        thickness: float,
-    ) -> None:
-        node = edge.source
-
-        loop_radius = max(
-            18.0,
-            node.radius * 0.65,
-        )
-
-        center_x = node.x
-        center_y = (
-            node.y
-            - node.radius
-            - loop_radius
-            + 5.0
-        )
-
-        dpg.draw_circle(
-            center=(
-                center_x,
-                center_y,
-            ),
-            radius=loop_radius,
-            color=color,
-            fill=(0, 0, 0, 0),
-            thickness=thickness,
-            parent="canvas_layer",
-            tag=self.edge_line_tag(edge),
-        )
-
-        if edge.is_directed:
-            arrow_x = (
-                center_x + loop_radius
-            )
-
-            arrow_y = center_y
-
-            dpg.draw_triangle(
-                p1=(
-                    arrow_x,
-                    arrow_y,
-                ),
-                p2=(
-                    arrow_x - 12,
-                    arrow_y - 6,
-                ),
-                p3=(
-                    arrow_x - 12,
-                    arrow_y + 6,
-                ),
-                color=color,
-                fill=color,
-                parent="canvas_layer",
-                tag=self.edge_arrow_tag(edge),
-            )
-
-    # ==========================================================
-    # EDGE GEOMETRY
-    # ==========================================================
-
-    def get_edge_endpoints(
-        self,
-        edge: Edge,
-    ) -> tuple[
-        tuple[float, float],
-        tuple[float, float],
-    ]:
-        source = edge.source
-        target = edge.target
-
-        dx = target.x - source.x
-        dy = target.y - source.y
-
-        distance = math.hypot(
-            dx,
-            dy,
-        )
-
-        if distance == 0:
-            return (
-                source.position,
-                target.position,
-            )
-
-        unit_x = dx / distance
-        unit_y = dy / distance
-
-        source_radius = (
-            self.get_node_connection_radius(
-                source,
-                unit_x,
-                unit_y,
-            )
-        )
-
-        target_radius = (
-            self.get_node_connection_radius(
-                target,
-                -unit_x,
-                -unit_y,
-            )
-        )
-
-        start = (
-            source.x
-            + unit_x * source_radius,
-            source.y
-            + unit_y * source_radius,
-        )
-
-        end = (
-            target.x
-            - unit_x * target_radius,
-            target.y
-            - unit_y * target_radius,
-        )
-
-        return start, end
-
-    @staticmethod
-    def get_node_connection_radius(
-        node: Node,
-        unit_x: float,
-        unit_y: float,
-    ) -> float:
-        if node.shape == "Circle":
-            return node.radius
-
-        if node.shape == "Square":
-            half = node.size / 2.0
-
-            divisor = max(
-                abs(unit_x),
-                abs(unit_y),
-                0.0001,
-            )
-
-            return half / divisor
-
-        if node.shape == "Rectangle":
-            half_width = node.size / 2.0
-            half_height = node.size / 3.0
-
-            tx = (
-                half_width / abs(unit_x)
-                if abs(unit_x) > 0.0001
-                else float("inf")
-            )
-
-            ty = (
-                half_height / abs(unit_y)
-                if abs(unit_y) > 0.0001
-                else float("inf")
-            )
-
-            return min(
-                tx,
-                ty,
-            )
-
-        return node.radius
-
-    # ==========================================================
-    # EDGE HIT TESTING
-    # ==========================================================
-
-    def find_edge_at(
-        self,
-        x: float,
-        y: float,
-    ) -> Edge | None:
-        for edge in reversed(
-            self.graph.edges
-        ):
-            if edge.is_self_loop:
-                if self.point_near_self_loop(
-                    edge,
-                    x,
-                    y,
-                ):
-                    return edge
-
-            else:
-                if self.point_near_edge(
-                    edge,
-                    x,
-                    y,
-                ):
-                    return edge
-
-        return None
-
-    def point_near_edge(
-        self,
-        edge: Edge,
-        x: float,
-        y: float,
-    ) -> bool:
-        start, end = self.get_edge_endpoints(
-            edge
-        )
-
-        distance = (
-            self.distance_to_segment(
-                x,
-                y,
-                start[0],
-                start[1],
-                end[0],
-                end[1],
-            )
-        )
-
-        tolerance = max(
-            7.0,
-            edge.thickness + 5.0,
-        )
-
-        return distance <= tolerance
-
-    @staticmethod
-    def point_near_self_loop(
-        edge: Edge,
-        x: float,
-        y: float,
-    ) -> bool:
-        node = edge.source
-
-        loop_radius = max(
-            18.0,
-            node.radius * 0.65,
-        )
-
-        center_x = node.x
-
-        center_y = (
-            node.y
-            - node.radius
-            - loop_radius
-            + 5.0
-        )
-
-        distance = math.hypot(
-            x - center_x,
-            y - center_y,
-        )
-
-        tolerance = max(
-            7.0,
-            edge.thickness + 5.0,
-        )
-
-        return (
-            abs(
-                distance - loop_radius
-            )
-            <= tolerance
-        )
-
-    @staticmethod
-    def distance_to_segment(
-        px: float,
-        py: float,
-        x1: float,
-        y1: float,
-        x2: float,
-        y2: float,
-    ) -> float:
-        dx = x2 - x1
-        dy = y2 - y1
-
-        length_squared = (
-            dx * dx
-            + dy * dy
-        )
-
-        if length_squared == 0:
-            return math.hypot(
-                px - x1,
-                py - y1,
-            )
-
-        t = (
-            (
-                (px - x1) * dx
-                + (py - y1) * dy
-            )
-            / length_squared
-        )
-
-        t = max(
-            0.0,
-            min(
-                1.0,
-                t,
-            ),
-        )
-
-        closest_x = (
-            x1 + t * dx
-        )
-
-        closest_y = (
-            y1 + t * dy
-        )
-
-        return math.hypot(
-            px - closest_x,
-            py - closest_y,
-        )
-
-    # ==========================================================
     # EDGE SELECTION
     # ==========================================================
 
@@ -1203,63 +519,6 @@ class GraphEditor:
             "status_text",
             f"Selected {edge.name}",
         )
-
-    # ==========================================================
-    # EDGE REDRAWING
-    # ==========================================================
-
-    def redraw_edges_for_node(
-        self,
-        node: Node,
-    ) -> None:
-        for edge in self.graph.edges_for_node(
-            node
-        ):
-            self.draw_edge(edge)
-
-    def redraw_node_on_top(
-        self,
-        node: Node,
-    ) -> None:
-        self.draw_node(node)
-
-    def redraw_all(
-        self,
-    ) -> None:
-        for edge in self.graph.edges:
-            self.draw_edge(edge)
-
-        for node in self.graph.nodes:
-            self.draw_node(node)
-
-    # ==========================================================
-    # EDGE DRAWING TAGS
-    # ==========================================================
-
-    @staticmethod
-    def edge_line_tag(
-        edge: Edge,
-    ) -> str:
-        return f"edge_{edge.edge_id}"
-
-    @staticmethod
-    def edge_arrow_tag(
-        edge: Edge,
-    ) -> str:
-        return f"edge_arrow_{edge.edge_id}"
-
-    def delete_edge_drawing(
-        self,
-        edge: Edge,
-    ) -> None:
-        tags = (
-            self.edge_line_tag(edge),
-            self.edge_arrow_tag(edge),
-        )
-
-        for tag in tags:
-            if dpg.does_item_exist(tag):
-                dpg.delete_item(tag)
 
     # ==========================================================
     # CLEAR SELECTION
@@ -1354,7 +613,6 @@ class GraphEditor:
             node.color,
         )
 
-    # Compatibility with previous version.
     def update_properties_panel(
         self,
     ) -> None:
@@ -1485,6 +743,10 @@ class GraphEditor:
             )
             return
 
+        if new_name == node.name:
+            return
+
+        self.record_history("Rename node")
         node.name = new_name
 
         self.redraw_edges_for_node(node)
@@ -1508,7 +770,12 @@ class GraphEditor:
         if node is None:
             return
 
-        node.x = float(app_data)
+        new_x = float(app_data)
+        if new_x == node.x:
+            return
+
+        self.record_history("Change node X")
+        node.x = new_x
 
         self.redraw_edges_for_node(node)
         self.draw_node(node)
@@ -1523,7 +790,12 @@ class GraphEditor:
         if node is None:
             return
 
-        node.y = float(app_data)
+        new_y = float(app_data)
+        if new_y == node.y:
+            return
+
+        self.record_history("Change node Y")
+        node.y = new_y
 
         self.redraw_edges_for_node(node)
         self.draw_node(node)
@@ -1538,7 +810,12 @@ class GraphEditor:
         if node is None:
             return
 
-        node.size = float(app_data)
+        new_size = float(app_data)
+        if new_size == node.size:
+            return
+
+        self.record_history("Change node size")
+        node.size = new_size
 
         self.redraw_edges_for_node(node)
         self.draw_node(node)
@@ -1553,6 +830,10 @@ class GraphEditor:
         if node is None:
             return
 
+        if app_data == node.shape:
+            return
+
+        self.record_history("Change node shape")
         node.shape = app_data
 
         self.redraw_edges_for_node(node)
@@ -1568,9 +849,12 @@ class GraphEditor:
         if node is None:
             return
 
-        node.color = self.normalize_color(
-            app_data
-        )
+        new_color = self.normalize_color(app_data)
+        if new_color == node.color:
+            return
+
+        self.record_history("Change node color")
+        node.color = new_color
 
         self.draw_node(node)
 
@@ -1597,6 +881,10 @@ class GraphEditor:
             )
             return
 
+        if new_name == edge.name:
+            return
+
+        self.record_history("Rename edge")
         edge.name = new_name
 
         self.update_edge_properties_panel()
@@ -1616,9 +904,12 @@ class GraphEditor:
         if edge is None:
             return
 
-        edge.thickness = float(
-            app_data
-        )
+        new_thickness = float(app_data)
+        if new_thickness == edge.thickness:
+            return
+
+        self.record_history("Change edge thickness")
+        edge.thickness = new_thickness
 
         self.draw_edge(edge)
 
@@ -1632,9 +923,12 @@ class GraphEditor:
         if edge is None:
             return
 
-        edge.color = self.normalize_color(
-            app_data
-        )
+        new_color = self.normalize_color(app_data)
+        if new_color == edge.color:
+            return
+
+        self.record_history("Change edge color")
+        edge.color = new_color
 
         self.draw_edge(edge)
 
@@ -1681,6 +975,8 @@ class GraphEditor:
 
         node_name = node.name
 
+        self.record_history("Delete node")
+
         connected_edges = (
             self.graph.edges_for_node(node)
         )
@@ -1719,6 +1015,8 @@ class GraphEditor:
 
         edge_name = edge.name
 
+        self.record_history("Delete edge")
+
         self.delete_edge_drawing(edge)
 
         self.graph.remove_edge(
@@ -1734,6 +1032,169 @@ class GraphEditor:
         dpg.set_value(
             "status_text",
             f"Deleted {edge_name}",
+        )
+
+    # ==========================================================
+    # HISTORY / CLIPBOARD
+    # ==========================================================
+
+    def record_history(self, description: str) -> None:
+        self.history.record(
+            graph=self.graph,
+            next_node_id=self.next_node_id,
+            next_edge_id=self.next_edge_id,
+            description=description,
+        )
+
+    def undo(
+        self,
+        sender: int | str = 0,
+        app_data: object = None,
+    ) -> None:
+        result = self.history.undo(
+            current_graph=self.graph,
+            next_node_id=self.next_node_id,
+            next_edge_id=self.next_edge_id,
+        )
+
+        if result is None:
+            dpg.set_value("status_text", "Nothing to undo")
+            return
+
+        self.restore_history_result(result)
+        dpg.set_value(
+            "status_text",
+            f"Undo: {result.description}" if result.description else "Undo",
+        )
+
+    def redo(
+        self,
+        sender: int | str = 0,
+        app_data: object = None,
+    ) -> None:
+        result = self.history.redo(
+            current_graph=self.graph,
+            next_node_id=self.next_node_id,
+            next_edge_id=self.next_edge_id,
+        )
+
+        if result is None:
+            dpg.set_value("status_text", "Nothing to redo")
+            return
+
+        self.restore_history_result(result)
+        dpg.set_value(
+            "status_text",
+            f"Redo: {result.description}" if result.description else "Redo",
+        )
+
+    def restore_history_result(self, result: HistoryResult) -> None:
+        for edge in self.graph.edges:
+            self.delete_edge_drawing(edge)
+
+        for node in self.graph.nodes:
+            self.delete_node_drawing(node)
+
+        self.graph = result.graph
+        self.next_node_id = result.next_node_id
+        self.next_edge_id = result.next_edge_id
+
+        self.selected_node = None
+        self.selected_edge = None
+        self.pending_edge_source = None
+        self.dragging_node = None
+        self.drag_history_recorded = False
+
+        self.clear_properties_panel()
+        self.redraw_all()
+        self.update_graph_counters()
+        self.apply_view_transform()
+
+    def copy_selected(
+        self,
+        sender: int | str = 0,
+        app_data: object = None,
+    ) -> None:
+        if self.selected_node is not None:
+            node = self.selected_node
+            self.clipboard.copy_node(
+                node=node,
+                connected_edges=self.graph.edges_for_node(node),
+            )
+            dpg.set_value("status_text", f"Copied {node.name}")
+            return
+
+        if self.selected_edge is not None:
+            edge = self.selected_edge
+            self.clipboard.copy(
+                nodes=(edge.source, edge.target),
+                edges=(edge,),
+            )
+            dpg.set_value("status_text", f"Copied {edge.name}")
+            return
+
+        dpg.set_value("status_text", "Nothing selected to copy")
+
+    def cut_selected(
+        self,
+        sender: int | str = 0,
+        app_data: object = None,
+    ) -> None:
+        if self.selected_node is None and self.selected_edge is None:
+            dpg.set_value("status_text", "Nothing selected to cut")
+            return
+
+        self.copy_selected()
+        self.delete_selected()
+
+    def paste_clipboard(
+        self,
+        sender: int | str = 0,
+        app_data: object = None,
+    ) -> None:
+        if self.clipboard.is_empty:
+            dpg.set_value("status_text", "Clipboard is empty")
+            return
+
+        self.record_history("Paste")
+
+        result = self.clipboard.paste(
+            next_node_id=self.next_node_id,
+            next_edge_id=self.next_edge_id,
+        )
+
+        added_nodes: list[Node] = []
+        added_edges: list[Edge] = []
+
+        for node in result.nodes:
+            if self.graph.add_node(node):
+                added_nodes.append(node)
+
+        for edge in result.edges:
+            if self.graph.add_edge(edge):
+                added_edges.append(edge)
+
+        self.next_node_id = result.next_node_id
+        self.next_edge_id = result.next_edge_id
+
+        self.selected_node = None
+        self.selected_edge = None
+
+        for edge in added_edges:
+            self.draw_edge(edge)
+
+        for node in added_nodes:
+            self.draw_node(node)
+
+        if len(added_nodes) == 1:
+            self.select_node(added_nodes[0])
+        else:
+            self.clear_properties_panel()
+
+        self.update_graph_counters()
+        dpg.set_value(
+            "status_text",
+            f"Pasted {len(added_nodes)} node(s) and {len(added_edges)} edge(s)",
         )
 
     # ==========================================================
@@ -1766,255 +1227,208 @@ class GraphEditor:
             str(edge_count),
         )
 
-    # Compatibility with previous version.
     def update_node_counters(
         self,
     ) -> None:
         self.update_graph_counters()
-    
+
     # ==========================================================
-    # CANVAS VIEW
+    # VIEW DELEGATION
     # ==========================================================
-    def redraw_node_labels(
-        self,
-    ) -> None:
-        for node in self.graph.nodes:
-            self.draw_node_label(node)
 
-    def apply_view_transform(
-        self,
-    ) -> None:
-        scale_matrix = dpg.create_scale_matrix(
-            [
-                self.zoom,
-                self.zoom,
-            ]
-        )
+    def get_canvas_mouse_position(self) -> tuple[float, float]:
+        return self.view.get_canvas_mouse_position()
 
-        translation_matrix = dpg.create_translation_matrix(
-            [
-                self.pan_x,
-                self.pan_y,
-            ]
-        )
+    def redraw_node_labels(self) -> None:
+        self.renderer.redraw_node_labels()
 
-        transform = (
-            translation_matrix
-            * scale_matrix
-        )
-
-        dpg.apply_transform(
-            "canvas_layer",
-            transform,
-        )
-
-        zoom_text = (
-            f"{self.zoom * 100:.0f}%"
-        )
-
-        if dpg.does_item_exist(
-            "zoom_display"
-        ):
-            dpg.configure_item(
-                "zoom_display",
-                label=zoom_text,
-            )
-
-        if dpg.does_item_exist(
-            "status_zoom"
-        ):
-            dpg.set_value(
-                "status_zoom",
-                zoom_text,
-            )
-
+    def apply_view_transform(self) -> None:
+        self.view.apply_view_transform()
 
     def zoom_in(
         self,
         sender: int | str = 0,
         app_data: object = None,
     ) -> None:
-        self.zoom = min(
-            self.max_zoom,
-            self.zoom + self.zoom_step,
-        )
-
-        self.redraw_node_labels()
-        self.apply_view_transform()
-
+        self.view.zoom_in()
 
     def zoom_out(
         self,
         sender: int | str = 0,
         app_data: object = None,
     ) -> None:
-        self.zoom = max(
-            self.min_zoom,
-            self.zoom - self.zoom_step,
-        )
-
-        self.redraw_node_labels()
-        self.apply_view_transform()
-
+        self.view.zoom_out()
 
     def reset_view(
         self,
         sender: int | str = 0,
         app_data: object = None,
     ) -> None:
-        self.zoom = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
-
-        self.redraw_node_labels()
-        self.apply_view_transform()
-
-        dpg.set_value(
-            "status_text",
-            "View reset to 100%",
-        )
-
+        self.view.reset_view()
 
     def fit_view(
         self,
         sender: int | str = 0,
         app_data: object = None,
     ) -> None:
-        nodes = self.graph.nodes
+        self.view.fit_view()
 
-        if not nodes:
-            self.reset_view()
-            return
+    # ==========================================================
+    # HIT TESTING / GEOMETRY DELEGATION
+    # ==========================================================
 
-        canvas_width, canvas_height = dpg.get_item_rect_size(
-            "canvas_container"
+    def find_node_at(
+        self,
+        x: float,
+        y: float,
+    ) -> Node | None:
+        return self.hit_tester.find_node_at(x, y)
+
+    def point_inside_node(
+        self,
+        node: Node,
+        x: float,
+        y: float,
+    ) -> bool:
+        return self.hit_tester.point_inside_node(node, x, y)
+
+    def get_edge_endpoints(
+        self,
+        edge: Edge,
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        return self.hit_tester.get_edge_endpoints(edge)
+
+    def get_node_connection_radius(
+        self,
+        node: Node,
+        unit_x: float,
+        unit_y: float,
+    ) -> float:
+        return self.hit_tester.get_node_connection_radius(
+            node,
+            unit_x,
+            unit_y,
         )
 
-        if canvas_width <= 0:
-            return
+    def find_edge_at(
+        self,
+        x: float,
+        y: float,
+    ) -> Edge | None:
+        return self.hit_tester.find_edge_at(x, y)
 
-        if canvas_height <= 0:
-            return
+    def point_near_edge(
+        self,
+        edge: Edge,
+        x: float,
+        y: float,
+    ) -> bool:
+        return self.hit_tester.point_near_edge(edge, x, y)
 
-        padding = 80.0
+    def point_near_self_loop(
+        self,
+        edge: Edge,
+        x: float,
+        y: float,
+    ) -> bool:
+        return self.hit_tester.point_near_self_loop(edge, x, y)
 
-        min_x = min(
-            node.x - node.size / 2.0
-            for node in nodes
+    def distance_to_segment(
+        self,
+        px: float,
+        py: float,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+    ) -> float:
+        return self.hit_tester.distance_to_segment(
+            px,
+            py,
+            x1,
+            y1,
+            x2,
+            y2,
         )
 
-        max_x = max(
-            node.x + node.size / 2.0
-            for node in nodes
-        )
+    # ==========================================================
+    # RENDERER DELEGATION
+    # ==========================================================
 
-        min_y = min(
-            node.y - node.size / 2.0
-            for node in nodes
-        )
+    def draw_node(self, node: Node) -> None:
+        self.renderer.draw_node(node)
 
-        max_y = max(
-            node.y + node.size / 2.0
-            for node in nodes
-        )
+    def draw_node_label(self, node: Node) -> None:
+        self.renderer.draw_node_label(node)
 
-        graph_width = max(
-            1.0,
-            max_x - min_x,
-        )
+    def get_fitted_node_label(
+        self,
+        node: Node,
+    ) -> tuple[str, float]:
+        return self.renderer.get_fitted_node_label(node)
 
-        graph_height = max(
-            1.0,
-            max_y - min_y,
-        )
+    def get_node_label_max_width(self, node: Node) -> float:
+        return self.renderer.get_node_label_max_width(node)
 
-        available_width = max(
-            1.0,
-            canvas_width - padding * 2.0,
-        )
+    def delete_node_drawing(self, node: Node) -> None:
+        self.renderer.delete_node_drawing(node)
 
-        available_height = max(
-            1.0,
-            canvas_height - padding * 2.0,
-        )
+    def node_tag(self, node: Node) -> str:
+        return self.renderer.node_tag(node)
 
-        zoom_x = (
-            available_width
-            / graph_width
-        )
+    def node_label_tag(self, node: Node) -> str:
+        return self.renderer.node_label_tag(node)
 
-        zoom_y = (
-            available_height
-            / graph_height
-        )
+    def draw_edge(self, edge: Edge) -> None:
+        self.renderer.draw_edge(edge)
 
-        self.zoom = max(
-            self.min_zoom,
-            min(
-                self.max_zoom,
-                zoom_x,
-                zoom_y,
-            ),
-        )
+    def draw_regular_edge(
+        self,
+        edge: Edge,
+        color: tuple[int, int, int, int],
+        thickness: float,
+    ) -> None:
+        self.renderer.draw_regular_edge(edge, color, thickness)
 
-        graph_center_x = (
-            min_x + max_x
-        ) / 2.0
+    def draw_arrowhead(
+        self,
+        edge: Edge,
+        start: tuple[float, float],
+        end: tuple[float, float],
+        color: tuple[int, int, int, int],
+    ) -> None:
+        self.renderer.draw_arrowhead(edge, start, end, color)
 
-        graph_center_y = (
-            min_y + max_y
-        ) / 2.0
+    def draw_self_loop(
+        self,
+        edge: Edge,
+        color: tuple[int, int, int, int],
+        thickness: float,
+    ) -> None:
+        self.renderer.draw_self_loop(edge, color, thickness)
 
-        canvas_center_x = (
-            canvas_width / 2.0
-        )
+    def redraw_edges_for_node(self, node: Node) -> None:
+        self.renderer.redraw_edges_for_node(node)
 
-        canvas_center_y = (
-            canvas_height / 2.0
-        )
+    def redraw_node_on_top(self, node: Node) -> None:
+        self.renderer.redraw_node_on_top(node)
 
-        self.pan_x = (
-            canvas_center_x
-            - graph_center_x * self.zoom
-        )
+    def redraw_all(self) -> None:
+        self.renderer.redraw_all()
 
-        self.pan_y = (
-            canvas_center_y
-            - graph_center_y * self.zoom
-        )
+    def edge_line_tag(self, edge: Edge) -> str:
+        return self.renderer.edge_line_tag(edge)
 
-        self.redraw_node_labels()
-        self.apply_view_transform()
+    def edge_arrow_tag(self, edge: Edge) -> str:
+        return self.renderer.edge_arrow_tag(edge)
 
-        dpg.set_value(
-            "status_text",
-            "Graph fitted to view",
-        )
+    def delete_edge_drawing(self, edge: Edge) -> None:
+        self.renderer.delete_edge_drawing(edge)
 
     # ==========================================================
     # HELPERS
     # ==========================================================
 
-    @staticmethod
-    def get_text_size(
-        text: str,
-    ) -> tuple[float, float]:
-        size = dpg.get_text_size(
-            text
-        )
-
-        if size is None:
-            return (
-                float(len(text) * 7),
-                14.0,
-            )
-
-        return (
-            float(size[0]),
-            float(size[1]),
-        )
-
-    @staticmethod
     def normalize_color(
         color: list[float],
     ) -> tuple[int, int, int, int]:
@@ -2051,7 +1465,6 @@ class GraphEditor:
             values[3],
         )
 
-    @staticmethod
     def set_value_if_exists(
         tag: str,
         value: object,

@@ -59,13 +59,13 @@ def create_menu_bar(
             dpg.add_menu_item(
                 label="Undo",
                 shortcut="Ctrl+Z",
-                enabled=False,
+                callback=editor.undo,
             )
 
             dpg.add_menu_item(
                 label="Redo",
                 shortcut="Ctrl+Y",
-                enabled=False,
+                callback=editor.redo
             )
 
             dpg.add_separator()
@@ -73,19 +73,19 @@ def create_menu_bar(
             dpg.add_menu_item(
                 label="Cut",
                 shortcut="Ctrl+X",
-                enabled=False,
+                callback=editor.cut_selected,
             )
 
             dpg.add_menu_item(
                 label="Copy",
                 shortcut="Ctrl+C",
-                enabled=False,
+                callback=editor.copy_selected,
             )
 
             dpg.add_menu_item(
                 label="Paste",
                 shortcut="Ctrl+V",
-                enabled=False,
+                callback=editor.paste_clipboard,
             )
 
             dpg.add_separator()
