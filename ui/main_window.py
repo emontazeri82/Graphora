@@ -23,7 +23,7 @@ def create_main_window(
         with dpg.group(horizontal=True):
             create_selecting_panel(editor)
             create_graph_editor(editor)
-            create_properties_panel()
+            create_properties_panel(editor)
 
         dpg.add_separator()
 
