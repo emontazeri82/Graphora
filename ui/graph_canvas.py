@@ -67,8 +67,8 @@ def create_graph_editor(
             )
 
             with dpg.drawlist(
-                width=-1,
-                height=-1,
+                width=2000,
+                height=2000,
                 tag="graph_canvas"
             ):
                 pass
