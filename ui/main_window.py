@@ -16,7 +16,7 @@ def create_main_window(
         label="Graphora",
         no_collapse=True
     ):
-        create_menu_bar()
+        create_menu_bar(editor)
 
         dpg.add_spacer(height=5)
 

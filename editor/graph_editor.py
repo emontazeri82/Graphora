@@ -363,22 +363,118 @@ class GraphEditor:
         if dpg.does_item_exist(tag):
             dpg.delete_item(tag)
 
-        text_width, text_height = (
-            self.get_text_size(node.name)
+        display_text, base_font_size = (
+            self.get_fitted_node_label(node)
         )
+
+        font_size = max(
+            6.0,
+            base_font_size * self.zoom,
+        )
+
+        text_width, text_height = self.get_text_size(
+            display_text
+        )
+
+        size_ratio = (
+            base_font_size / 14.0
+        )
+
+        text_width *= size_ratio
+        text_height *= size_ratio
 
         dpg.draw_text(
             pos=(
                 node.x - text_width / 2.0,
                 node.y - text_height / 2.0,
             ),
-            text=node.name,
+            text=display_text,
             color=self.LABEL_COLOR,
-            size=14,
+            size=font_size,
             parent="canvas_layer",
             tag=tag,
         )
+    def get_fitted_node_label(
+        self,
+        node: Node,
+    ) -> tuple[str, float]:
+        text = node.name
 
+        normal_font_size = 14.0
+        min_font_size = 9.0
+
+        max_width = self.get_node_label_max_width(node)
+
+        text_width, _ = self.get_text_size(text)
+
+        if text_width <= max_width:
+            return text, normal_font_size
+
+        font_size = (
+            normal_font_size
+            * max_width
+            / max(text_width, 1.0)
+        )
+
+        if font_size >= min_font_size:
+            return text, font_size
+
+        font_size = min_font_size
+
+        available_width = (
+            max_width
+            * normal_font_size
+            / font_size
+        )
+
+        ellipsis = "..."
+        fitted_text = text
+
+        while fitted_text:
+            candidate = fitted_text + ellipsis
+
+            candidate_width, _ = self.get_text_size(
+                candidate
+            )
+
+            if candidate_width <= available_width:
+                return candidate, font_size
+
+            fitted_text = fitted_text[:-1]
+
+        return ellipsis, font_size
+
+
+    @staticmethod
+    def get_node_label_max_width(
+        node: Node,
+    ) -> float:
+        padding = 10.0
+
+        if node.shape == "Circle":
+            # Keep text comfortably inside the center of the circle.
+            return max(
+                10.0,
+                node.size * 0.72,
+            )
+
+        if node.shape == "Square":
+            return max(
+                10.0,
+                node.size - padding * 2.0,
+            )
+
+        if node.shape == "Rectangle":
+            return max(
+                10.0,
+                node.size - padding * 2.0,
+            )
+
+        return max(
+            10.0,
+            node.size - padding * 2.0,
+        )
+    
     def delete_node_drawing(
         self,
         node: Node,
@@ -1551,6 +1647,18 @@ class GraphEditor:
         sender: int | str,
         app_data: object,
     ) -> None:
+        text_inputs = (
+            "node_label",
+            "edge_label",
+        )
+
+        for item in text_inputs:
+            if (
+                dpg.does_item_exist(item)
+                and dpg.is_item_active(item)
+            ):
+                return
+
         self.delete_selected()
 
     def delete_selected(
@@ -1667,6 +1775,11 @@ class GraphEditor:
     # ==========================================================
     # CANVAS VIEW
     # ==========================================================
+    def redraw_node_labels(
+        self,
+    ) -> None:
+        for node in self.graph.nodes:
+            self.draw_node_label(node)
 
     def apply_view_transform(
         self,
@@ -1726,6 +1839,7 @@ class GraphEditor:
             self.zoom + self.zoom_step,
         )
 
+        self.redraw_node_labels()
         self.apply_view_transform()
 
 
@@ -1739,6 +1853,7 @@ class GraphEditor:
             self.zoom - self.zoom_step,
         )
 
+        self.redraw_node_labels()
         self.apply_view_transform()
 
 
@@ -1751,6 +1866,7 @@ class GraphEditor:
         self.pan_x = 0.0
         self.pan_y = 0.0
 
+        self.redraw_node_labels()
         self.apply_view_transform()
 
         dpg.set_value(
@@ -1867,6 +1983,7 @@ class GraphEditor:
             - graph_center_y * self.zoom
         )
 
+        self.redraw_node_labels()
         self.apply_view_transform()
 
         dpg.set_value(

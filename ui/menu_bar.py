@@ -1,39 +1,132 @@
 import dearpygui.dearpygui as dpg
 
+from editor.graph_editor import GraphEditor
+
+
 # ============================================================
 # Menu Bar
 # ============================================================
 
-def create_menu_bar() -> None:
+def create_menu_bar(
+    editor: GraphEditor,
+) -> None:
     with dpg.menu_bar():
 
+        # ====================================================
+        # File Menu
+        # ====================================================
+
         with dpg.menu(label="File"):
-            dpg.add_menu_item(label="New")
-            dpg.add_menu_item(label="Open...")
+            dpg.add_menu_item(
+                label="New",
+                shortcut="Ctrl+N",
+                enabled=False,
+            )
+
+            dpg.add_menu_item(
+                label="Open...",
+                shortcut="Ctrl+O",
+                enabled=False,
+            )
+
             dpg.add_separator()
 
-            dpg.add_menu_item(label="Save")
-            dpg.add_menu_item(label="Save As...")
+            dpg.add_menu_item(
+                label="Save",
+                shortcut="Ctrl+S",
+                enabled=False,
+            )
+
+            dpg.add_menu_item(
+                label="Save As...",
+                shortcut="Ctrl+Shift+S",
+                enabled=False,
+            )
 
             dpg.add_separator()
-            dpg.add_menu_item(label="Exit")
+
+            dpg.add_menu_item(
+                label="Exit",
+                shortcut="Alt+F4",
+                callback=lambda: dpg.stop_dearpygui()
+            )
+
+        # ====================================================
+        # Edit Menu
+        # ====================================================
 
         with dpg.menu(label="Edit"):
-            dpg.add_menu_item(label="Undo")
-            dpg.add_menu_item(label="Redo")
+            dpg.add_menu_item(
+                label="Undo",
+                shortcut="Ctrl+Z",
+                enabled=False,
+            )
+
+            dpg.add_menu_item(
+                label="Redo",
+                shortcut="Ctrl+Y",
+                enabled=False,
+            )
 
             dpg.add_separator()
 
-            dpg.add_menu_item(label="Cut")
-            dpg.add_menu_item(label="Copy")
-            dpg.add_menu_item(label="Paste")
-            dpg.add_menu_item(label="Delete")
+            dpg.add_menu_item(
+                label="Cut",
+                shortcut="Ctrl+X",
+                enabled=False,
+            )
+
+            dpg.add_menu_item(
+                label="Copy",
+                shortcut="Ctrl+C",
+                enabled=False,
+            )
+
+            dpg.add_menu_item(
+                label="Paste",
+                shortcut="Ctrl+V",
+                enabled=False,
+            )
+
+            dpg.add_separator()
+
+            dpg.add_menu_item(
+                label="Delete Selected",
+                shortcut="Delete",
+                callback=editor.delete_selected,
+            )
+
+        # ====================================================
+        # View Menu
+        # ====================================================
 
         with dpg.menu(label="View"):
-            dpg.add_menu_item(label="Reset View")
-            dpg.add_menu_item(label="Fit Graph to Window")
+            dpg.add_menu_item(
+                label="Reset View",
+                shortcut="Ctrl+0",
+                callback=editor.reset_view,
+            )
+
+            dpg.add_menu_item(
+                label="Fit Graph to Window",
+                shortcut="F",
+                callback=editor.fit_view,
+            )
+
+        # ====================================================
+        # Help Menu
+        # ====================================================
 
         with dpg.menu(label="Help"):
-            dpg.add_menu_item(label="User Guide")
+            dpg.add_menu_item(
+                label="User Guide",
+                shortcut="F1",
+                enabled=False,
+            )
+
             dpg.add_separator()
-            dpg.add_menu_item(label="About Graphora")
+
+            dpg.add_menu_item(
+                label="About Graphora",
+                enabled=False,
+            )
